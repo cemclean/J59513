@@ -1,0 +1,1586 @@
+     H                                                                          
+      *--------------------------------------------------------------           
+      * Program: P59513                                                         
+      *    Text: Print Container Labels - WMS                                   
+      *    Date: 06.30.2008                                                     
+      *  Author: Charlie McLean                                                 
+      * Project: CC26036                                                        
+      *                                                                         
+      *--------------------------------------------------------------           
+      * Function: Print Can Labels from four sources:                           
+      *             1. Bulk Work Order                                          
+      *                - List all pack sizes                                    
+      *                - For each pack size to print:                           
+      *                  o Check for Lot Master Record                          
+      *                  o Create if not found                                  
+      *                  o Update Expiration Date if blank. Use                 
+      *                    Work Order close. If blank use today.                
+      *                  o Use Lot No of Bulk for all canned item               
+      *                - Canning work orders will be created with               
+      *                  a scan/entry process after canning is done             
+      *             2. Canning Work Order - RMs and SMs                         
+      *                - List pack size of finished good                        
+      *                - Lot Master is created with Work Order                  
+      *                - Print using same routine as above                      
+      *             3. Lot Number - Reprint or Repack                           
+      *                - Find Bulk Work Order                                   
+      *                - Process as No. 1 above                                 
+      *             4. Purchase Order                                           
+      *                - Show only pack sizes on PO                             
+      *                - Bring forward quantity on PO                           
+      *                - Error condition is no Lot Master                       
+      *                - Update Expiration Date using today's date              
+      *             5. If data area D56410L = 1, create LM record               
+      *                for 310 warehouse.                                       
+      *                                                                         
+      *--------------------------------------------------------------           
+      * Modifications                                                           
+      *--------------------------------------------------------------           
+      * CC26036   09.30.2008  Charlie McLean                                    
+      *           No print if lot is not approved IOLOTS NE *BLANKS             
+      * T23278 04.11.2012 Charlie McLean                                        
+      *        Print Wercs hazard label if W6 itme x-ref                        
+      *        Fix PC x-ref to reference bulk.                                  
+      *        Improve error message 'Lot invalid, or otherwise...'             
+      *                                                                         
+      *--------------------------------------------------------------           
+      * ID  F  C  H  L  -   Function of Indicators                              
+      * --  -- -- -- --   -------------------------------------------           
+      *           03      F03 End of job                                        
+      *           08      F08 WRKRMTOUTQ S005                                   
+      *           17      F17 Test print S006                                   
+      *           31      display subfile                                       
+      *           31      display control record                                
+      *          N31      clear subifle                                         
+      *           34      general purpose file read/ chain                      
+      *           35      general purpose file read/ chain                      
+      *           43      position cursor for detail                            
+      *           44      Allow qty input, i.e. no error                        
+      *           48      box label printer is in use                           
+      *           51      remainder present (check digit calc)                  
+      *           55      at least one subfile record has changed               
+      *                   (a quantity has been keyed)                           
+      *           80      invalid work bulk work order (F4801LAJ)               
+      *           90      display SFLEND(*MORE) - all found                     
+      *          N90      ROLLUP                                                
+      *           94      end of subfile read for change                        
+      *           98      S999 has run                                          
+      *                                                                         
+      *--------------------------------------------------------------           
+      * Begin Program                                                           
+      *--------------------------------------------------------------           
+     FV59513  CF  E                    WORKSTN                              0001
+     F                                        RRN   KSFILE DETAIL               
+      *           NN automatic next number                                      
+     FF0002   UF  E           K        DISK                                     
+      *           DR user defined codes                                         
+     FF0005   IF  E           K        DISK                                     
+      *           IX bill of material - branch, parent                          
+     FF3002LA IF  E           K        DISK                                     
+      *           IX bill of material - by product, item, branch                
+     FF3002L4 IF  E           K        DISK                                     
+     F            I3002                             KRENAMEI3002B               
+      *           IM item master                                                
+     FF4101LB IF  E           K        DISK                                     
+      *           IB item warehouse                                             
+     FF4102L3 IF  E           K        DISK                                     
+      *           IV item cross reference                                       
+     FF4104LD UF  E           K        DISK                      A              
+      *           IO lot master                                                 
+     FF4108   UF  E           K        DISK                      A              
+      *           IO lot master - by lot/ branch                                
+     FF4108L2 IF  E           K        DISK                                     
+     F            I4108                             KRENAMEI4108B               
+      *           PD purchase order detail                                      
+     FF4311LA IF  E           K        DISK                                     
+      *           WA work order                                                 
+     FF4801LAJIF  E           K        DISK                                     
+      *           Julian to Gregorian translation                               
+     FF56365  IF  E           K        DISK                                     
+ses13 *           Forecast file for SAP Demand                                  
+ses13FF3460LB IF  E           K        DISK                                     
+      * compile time table at end of program                                    
+     E                    CMDV    1   3 60                                      
+      * field used as parm for QCMDEXC call                                     
+     E                    CMD        60  1                                      
+      * stuff sent to can label via TL Ashford                                  
+     IMRGDTA      DS                                                            
+     I                                        1  30 LBSRP4                      
+     I                                       31  60 LBDSC1                      
+     I                                       61  90 LBDSC3                      
+     I                                       91 115 LBITM1                      
+     I                                      116 130 LBDOCO                      
+     I                                      131 144 LBITM                       
+     I                                      145 174 LBDL02                      
+     I                                      175 190 LBUSBY                      
+     I                                      191 220 LBPACK                      
+     I                                      221 246 LBCODE                      
+      * stuff sent to box label via TL Ashford                                  
+     IMRGDT2      DS                                                            
+     I                                        1  30 BBSRP4                      
+     I                                       31  60 BBDSC1                      
+     I                                       61  90 BBDSC3                      
+     I                                       91 115 BBITM1                      
+     I                                      116 130 BBDOCO                      
+     I                                      131 144 BBITM                       
+     I                                      145 174 BBDL02                      
+     I                                      175 190 BBUSBY                      
+     I                                      191 220 BBPACK                      
+     I                                      221 246 BBCODE                      
+     I                                      247 253 BBQTY                       
+      * stuff sent to ChemGes                                                   
+     ICHEMD       DS                                                            
+     I                                        1  15 CMITM1                      
+     I                                       16  19 CMFMT                       
+     I                                       20  49 CMDSC1                      
+     I                                       50  64 CMSRP4                      
+     I                                       65  94 CMPC                        
+     I                                       95 124 CMOUTQ                      
+     I                                      125 128 CMQTY                       
+      * complete bar code                                                       
+     IEANCDE      DS                                                            
+     I                                        1   2 EANCD1                      
+     I                                        3  16 EANCD2                      
+     I                                       17  18 EANCD3                      
+     I                                       19  26 EANCD4                      
+      * UDC code structure                                                      
+     II0005U      DS                                                            
+      *    System Code                                                          
+     I                                        1   4 #USY                        
+      *    Record Type                                                          
+     I                                        5   6 #URT                        
+      *    Code                                                                 
+     I                                        7  16 #UKY                        
+      *    Description Line 1                                                   
+     I                                       17  46 #UDL01                      
+      *    Description Line 2                                                   
+     I                                       47  76 #UDL02                      
+      *    Language Preference                                                  
+     I                                       77  78 #ULNGP                      
+      *    Action                                                               
+     I                                       79  79 #UACTN                      
+      *    Special Handling Code                                                
+     I                                       80  89 #USPHD                      
+      *    Error Flag                                                           
+     I                                       90  90 #UERR                       
+      * display as two columns item/label and description                       
+     I            DS                                                            
+     I                                        1  56 SFAB                        
+     I                                        1  25 SFA                         
+     I                                       27  56 SFB                         
+      * substring of BOM components looking for 'L61' label types               
+     I            DS                                                            
+     I                                        1  25 CLITM                       
+     I                                        1   3 CLAB                        
+      * Origin: United States                                                   
+     I            DS                                                            
+     I                                        1  30 BDL02                       
+     I                                        1   8 BDLA                        
+     I                                        9  30 BDLB                        
+      * GTIN assembly                                                           
+     I            DS                                                            
+     I                                        1  14 GTBLD                       
+     I                                        1   80PREFIX                      
+     I                                        2   80PREF                        
+     I                                        9  13 NITEM                       
+     I                                       14  14 CDIGIT                      
+      * GTIN check digit calculation                                            
+     IWRKDS       DS                                                            
+     I                                        1   7 WRKA                        
+     I                                        8  12 WRKB                        
+     I                                        1   10NTM1                        
+     I                                        2   20NTM2                        
+     I                                        3   30NTM3                        
+     I                                        4   40NTM4                        
+     I                                        5   50NTM5                        
+     I                                        6   60NTM6                        
+     I                                        7   70NTM7                        
+     I                                        8   80NTM8                        
+     I                                        9   90NTM9                        
+     I                                       10  100NTM10                       
+     I                                       11  110NTM11                       
+     I                                       12  120NTM12                       
+      * box qty zero supress                                                    
+     I            DS                                                            
+     I                                        1   2 BQ2                         
+     I                                        2   2 BQ1                         
+      *                                                                         
+      * TL Ashford print file name                                              
+     I              'BCLABELS'            C         BCFILE                      
+      * text constants                                                          
+26036I              'L61xxx Not found in -C         NOFND                       
+  |  I              'BOM            '                                           
+  |  I              '*** PO Line Closed *-C         PO999                       
+  |  I              '**   '                                                     
+  |  I              '*** PO Line Canceled-C         PO980                       
+  |  I              ' *** '                                                     
+  |  I              '  Shelf Life Days In-C         NDAY1                       
+  |  I              ' Item'                                                     
+  |  I              'Balance Is = 0      -C         NDAY2                       
+26036I              '          '                                                
+     I              'Lot:           '     C         BDOCO                       
+     I              'Item:         '      C         BITM                        
+     I              'PRT028'              C         TLAQ                        
+     I              'WO=Work Order PO=Pur-C         ERNORM                      
+     I              'chase Order LT=Lot  '                                      
+     I              'Invalid Work Order  -C         ERWO                        
+     I              '                    '                                      
+     I              'Invalid Lot Number  -C         ERLT                        
+     I              '                    '                                      
+     I              'Invalid Purchase Ord-C         ERPO                        
+     I              'er                  '                                      
+24779I              'Invalid PO or Lot no-C         ERPO1                       
+24779I              't passed QC test.   '                                      
+24779I              'Lot expiration origi-C         LTORIG                      
+24779I              'nation'                                                    
+      *                                                                         
+24779I***           'Lot invalid or has n-C         ERQC                        
+24779I***           'ot passed QC test.  '                                      
+24779I              'Lot invalid, or othe-C         ERQC                        
+24779I              'rwise unavailable.  '                                      
+23278I              'Lot is still in QC/Q-C         ERQC1                       
+23278I              'A                .  '                                      
+      *                                                                         
+24779I***           'Invalid product or s-C         ERSTKT                      
+24779I***           'tocking type.'                                             
+ses14I***           'Some pack sizes inva-C         ERSTKT                      
+ses14I***           'lid. Not in list.'                                         
+ses14I              'If pack size not lis-C         ERSTKT                      
+ses14I              'ted. Call Prod Ctl.'                                       
+ses13I***           'Some items not in Fo-C         ERFCST                      
+ses13I***           'recast file.'                                              
+ses14I              'Some sizes not in Fo-C         ERFCST                      
+ses14I              'recast, not in list'                                       
+24779I              '         305'        C         PLT305                      
+24779I              '         306'        C         PLT306                      
+      * ChemGes hazard label format                                             
+     I              '   5'                C         XMFMT                       
+24779 *                                                                         
+24779I/COPY JDECPY,IO4111                                                       
+      *                                                                         
+     C  N98                EXSR S999                                            
+      *                                                                         
+     C                     EXSR CLRSF                                           
+     C                     Z-ADD1         RRN                                   
+     C                     MOVE 'WO'      SCDTYP           doc type             
+     C                     MOVE ERNORM    SCERR                                 
+     C                     EXFMTHEADER                                          
+     C                     EXSR S001                       fill subfile         
+      *                                                                         
+     C           *IN03     DOWEQ*OFF                                            
+      * display wrkrmtoutq                                                      
+     C           *IN08     IFEQ *ON                                             
+     C                     EXSR S005                                            
+     C                     GOTO OMT                                             
+     C                     ENDIF                                                
+      * create pin function test print                                          
+     C           *IN17     IFEQ *ON                                             
+     C                     EXSR S006                                            
+     C                     GOTO OMT                                             
+     C                     ENDIF                                                
+      * handle responses to subfile                                             
+     C                     EXSR S002                       sfl chgs             
+      *                                                                         
+     C           OMT       TAG                                                  
+     C                     WRITETRAILER                                         
+ses13C           SCERR     IFNE *BLANKS                                         
+ses13C           SCERR     ANDNEERNORM                                          
+ses13C                     MOVE *ON       *IN80                                 
+ses13C                     ENDIF                                                
+     C                     EXFMTHEADER                                          
+     C                     ENDDO                                                
+      *                                                                         
+     C           END       TAG                                                  
+     C                     MOVE *ON       *INLR                                 
+      *                                                 subroutines             
+      *                                                                         
+      *------------------------------------------------------ clrsf             
+      * clear subfile                                                           
+      *                                                                         
+     C           CLRSF     BEGSR                                                
+     C                     MOVE *OFF      *IN31            dsp sfl              
+     C                     WRITEHEADER                                          
+     C                     MOVE *ON       *IN31                                 
+     C                     Z-ADD0         RRN                                   
+      *                                                                         
+     C                     WRITETRAILER                                         
+     C                     CLEARDETAIL                                          
+      *                                                                         
+     C                     ENDSR                                                
+      *------------------------------------------------------- S001             
+      * manage page, doc type                                                   
+      *                                                                         
+     C           S001      BEGSR                                                
+     C                     MOVE *OFF      *IN43            pos cursor           
+     C           SCDOCO    IFGT ' '                        document no          
+     C                     MOVE *BLANKS   ##DOCO  8        previous doc         
+     C                     MOVELSCDOCO    ##DOCO                                
+     C                     SELEC                                                
+      * work order processing                                                   
+     C           SCDTYP    WHEQ 'WO'                                            
+      *                                                                         
+     C                     MOVE *BLANKS   @@DOCO  8                             
+     C                     MOVE SCDOCO    @@DOCO           WO no                
+     C                     EXSR S003                       bulk WO?             
+      * purchase order processing                                               
+     C           SCDTYP    WHEQ 'PO'                                            
+     C                     MOVE *BLANKS   @@DOCO                                
+     C                     MOVE SCDOCO    @@DOCO           PO no                
+     C                     EXSR S004                                            
+      * lot number processing                                                   
+     C           SCDTYP    WHEQ 'LT'                                            
+     C                     MOVE *BLANKS   IO2K1                                 
+     C                     MOVE *BLANKS   IO2K2                                 
+     C                     MOVELSCDOCO    IO2K1            lot                  
+     C           IO2KEY    SETLLI4108B                                          
+     C                     READ I4108B                   34                     
+27399 * look for a PO or WO                                                     
+27399C           IOLOTN    DOWEQIO2K1                                           
+27399C           *IN34     ANDNE*ON                                             
+27399C           IODCTO    IFEQ 'WO'                                            
+27399C           IODCTO    OREQ 'OP'                                            
+27399C                     GOTO S001A                                           
+27399C                     ENDIF                                                
+27399C                     READ I4108B                   34                     
+27399C                     ENDDO                                                
+      *                                                                         
+27399C           S001A     TAG                                                  
+11994 * Interrogate lot status to determine if labels can print                 
+11994C                     MOVE *OFF      LOTCK   1                             
+11994 * Is this 2 tier validation                                               
+11994C                     MOVE *BLANKS   DRK1                                  
+11994C                     MOVE *BLANKS   DRK2                                  
+11994C                     MOVE *BLANKS   DRK3                                  
+11994 * 2 approaches: Only if lot status and iolrp5 <> *blank                   
+11994 *   or crate UDC 41, L5 entry for blank status and always chk             
+11994C           IOLOTS    IFNE *BLANKS                                         
+11994C           IOLRP5    ANDNE*BLANKS                                         
+11994C                     MOVEL'41'      DRK1                                  
+11994C                     MOVEL'L5'      DRK2                                  
+11994C                     MOVE IOLRP5    DRK3                                  
+11994C           DRKEY     CHAINF0005                37                         
+11994C           *IN37     IFEQ *OFF                                            
+11994C                     MOVELDRDL02    LOTCK                                 
+11994C                     ENDIF                                                
+11994C                     ENDIF                                                
+11994 *                                                                         
+24779C           IOLOTS    IFEQ *BLANKS                                         
+11994C           IOLOTS    ORNE *BLANKS                                         
+11994C           IOLOTS    ANDEQLOTCK                                           
+      * lot number - work order                                                 
+     C           IODCTO    IFEQ 'WO'                                            
+     C                     MOVE *BLANKS   @@DOCO                                
+     C                     MOVE IODOCO    @@DOCO           WO no                
+     C                     EXSR S003                                            
+     C                     ENDIF                                                
+      * lot number - purchase order                                             
+     C           IODCTO    IFEQ 'OP'                                            
+     C                     MOVE *BLANKS   @@DOCO                                
+     C*                    MOVE IODOCO    @@DOCO           WO no                
+     C                     MOVE SCDOCO    @@DOCO           PO no                
+     C                     EXSR S004A                                           
+     C                     ENDIF                                                
+     C                     ELSE                                                 
+     C                     MOVE *ON       *IN80                                 
+     C                     EXSR CLRSF                                           
+24779C           *IN34     IFEQ *ON                                             
+      * no hit, clear subfile, display error                                    
+     C                     MOVE ERLT      SCERR            bad WO               
+24779C                     ELSE                                                 
+24779 * lot not cleared testing                                                 
+      *                                                                         
+23278C           IOLOTS    IFEQ 'P'                                             
+23278C                     MOVE ERQC1     SCERR            iolots = P  lanks    
+23278C                     ELSE                                                 
+      *                                                                         
+24779C                     MOVE ERQC      SCERR            iolots <> *blanks    
+23278C                     ENDIF                                                
+24779C                     ENDIF                                                
+     C                     Z-ADD1         RRN                                   
+     C                     ENDIF                                                
+      *                                                                         
+     C                     ENDSL                                                
+      *                                                                         
+     C                     MOVE *ON       *IN90            all found            
+     C                     ENDIF                                                
+     C           S001E     ENDSR                                                
+      *-----------------------------------------------------   S002             
+      * handle subfile selections                                               
+     C           S002      BEGSR                                                
+      * if doc field is blank, clear subfile and wait                           
+     C           SCDOCO    IFEQ *BLANKS                                         
+     C                     EXSR CLRSF                                           
+     C                     Z-ADD1         RRN                                   
+     C                     MOVE 'WO'      SCDTYP           doc type             
+     C                     MOVE *OFF      *IN80            error cond           
+     C                     MOVE ERNORM    SCERR            error msg            
+     C                     MOVE ##STRX    SVSTRX           WO close             
+26036C                     MOVE *BLANKS   ##DOCO                                
+26036C                     MOVE *BLANKS   @@DOCO                                
+     C                     GOTO S002E                                           
+     C                     ENDIF                                                
+      * if doc field has changed, start over                                    
+     C           SCDOCO    IFNE ##DOCO                                          
+     C                     EXSR CLRSF                                           
+     C                     MOVE *BLANKS   PDNXTR           po nxt sts           
+     C                     Z-ADD1         RRN                                   
+     C                     MOVE *OFF      *IN80            error cond           
+     C                     MOVE ERNORM    SCERR            error msg            
+     C                     MOVE ##STRX    SVSTRX           WO close             
+26036C                     MOVE *BLANKS   ##DOCO                                
+26036C                     MOVE *BLANKS   @@DOCO                                
+     C                     EXSR S001                                            
+     C                     GOTO S002E                                           
+     C                     ENDIF                                                
+      * find changed records in subfile                                         
+     C                     MOVE *OFF      *IN55            any change           
+     C                     READCDETAIL                   94subfile              
+     C           *IN94     DOWEQ*OFF                                            
+     C           SFCQTY    IFGT 0                          front label          
+     C           SFBOX     ORGT 0                          box label            
+     C                     MOVE *ON       *IN55            qty request          
+     C                     EXSR S007                                            
+     C                     ENDIF                                                
+     C           SFHQTY    IFGT 0                          hazard label         
+     C                     MOVE *ON       *IN55            qty request          
+     C                     EXSR S009                                            
+     C                     ENDIF                                                
+     C                     READCDETAIL                   94subfile              
+     C                     ENDDO                                                
+      * if any labels were printed, clear subfile and start over                
+     C           *IN55     IFEQ *ON                                             
+     C                     EXSR CLRSF                                           
+     C                     MOVE *BLANKS   PDNXTR           po nxt sts           
+     C                     MOVE *BLANKS   SCDOCO           doc no               
+     C                     MOVE *BLANKS   ##DOCO                                
+     C                     Z-ADD1         RRN                                   
+     C                     MOVE 'WO'      SCDTYP           doc type             
+     C                     MOVE *OFF      *IN80            error cond           
+     C                     MOVE ERNORM    SCERR            error msg            
+     C                     MOVE ##STRX    SVSTRX           WO close             
+     C                     ENDIF                                                
+     C           S002E     ENDSR                                                
+      *------------------------------------------------------ S003              
+      * work order processing                                                   
+      *                                                                         
+     C           S003      BEGSR                                                
+24779C                     CLEARSCERR                                           
+99999C                     CLEARWKMCU                                           
+     C                     MOVE @@DOCO    WAKEY   80                            
+"N"  C           WAKEY     CHAINF4801LAJ             80                         
+     C           *IN80     IFNE *ON                                             
+99999C                     MOVELWAMMCU    WKMCU  12                             
+24779C           SCDTYP    IFNE 'LT'                                            
+99999 ***===     WAMMCU    ANDNEPLT305                                          
+99999 ***===     WAMMCU    ANDNEPLT306                                          
+24779 * is this lot approved                                                    
+24779C                     MOVELWALOTN    IO2K1     P                           
+24779C                     MOVE WAMMCU    IO2K2     P                           
+24779C                     EXSR SRLOTN                                          
+24779C           SCERR     IFNE *BLANKS                                         
+24779C                     GOTO S003E                                           
+24779C                     ENDIF                                                
+24779C                     ENDIF                                                
+      * use work order close date if present                                    
+      * today's date otherwise                                                  
+     C           WASTRX    IFGT 0                          WO close             
+     C                     Z-ADDWASTRX    SVSTRX                                
+     C                     ENDIF                                                
+      * item master                                                             
+"N"  C           WALITM    CHAINF4101LB              34                         
+     C           *IN34     IFNE *ON                                             
+      * bulk work order                                                         
+     C           WAWR01    IFNE 'UCLR'                                          
+     C           IMSTKT    IFEQ 'L'                        bulk                 
+     C           IMSTKT    OREQ 'M'                        SM                   
+     C           IMSTKT    OREQ 'P'                        raw matl             
+     C           IMSTKT    OREQ 'T'                        purchase             
++++  C           IMSTKT    OREQ 'S'                        sericol mfg          
+     C                     EXSR CLRSF                                           
+      *                                                                         
+     C                     MOVE *BLANKS   IXK1                                  
+     C                     MOVE *BLANKS   IXK2                                  
+     C                     MOVE *BLANKS   IXK3                                  
+      * read bill of material file                                              
+     C                     MOVE WALITM    IXK1             2nd item             
+     C                     MOVE WAMMCU    IXK3                                  
+     C           IXKEY     SETLLI3002B                                          
+      *                                                                         
+     C                     READ I3002B                   34                     
+     C           *IN34     DOUEQ*ON                                             
+      * bug out if past bulk number                                             
+     C           IXLITM    IFNE WALITM                                          
+     C                     GOTO S003E                                           
+     C                     ENDIF                                                
+      * ignore same item in another warehouse                                   
+     C           IXCMCU    IFNE WAMMCU                     BOM whse             
+     C                     GOTO S003C                                           
+     C                     ENDIF                                                
+      * found one - load subfile record                                         
+     C                     MOVE WAMMCU    SFBMCU           BOM whse             
+     C                     MOVE WAMMCU    SFLMCU           lot whse             
+26985C*                    MOVE WAITM     SFITM            bulk item            
+26985C                     MOVE WAITM     SFBITM           bulk item            
+     C                     MOVELWALOTN    SFLOTN           lot no               
+     C                     MOVELIXKITL    SFLITM                                
+     C                     EXSR S003A                                           
+     C           S003C     TAG                                                  
+     C                     READ I3002B                   34                     
+     C                     ENDDO                                                
+     C                     ENDIF                                                
+     C                     ENDIF                                                
+      * canning work order                                                      
+      * WAWR01 = 'UCLR' (also held in IBSRP9)                                   
+     C           WAWR01    IFEQ 'UCLR'                                          
+     C                     EXSR CLRSF                                           
+     C                     MOVE WALITM    SFLITM                                
+     C                     MOVE WAMMCU    SFBMCU           BOM whse             
+     C                     MOVE WAMMCU    SFLMCU           lot whse             
+     C                     MOVE WAITM     SFITM            short item           
+     C                     MOVELWALOTN    SFLOTN           lot no               
+     C                     EXSR S003A                                           
+     C                     ENDIF                                                
+     C                     ENDIF                                                
+     C                     ELSE                                                 
+      * no hit, clear subfile, show error                                       
+     C                     EXSR CLRSF                                           
+     C                     MOVE ERWO      SCERR            bad WO               
+     C                     Z-ADD1         RRN                                   
+     C                     ENDIF                                                
+     C           S003E     ENDSR                                                
+      *------------------------------------------------------ S003A             
+      * read bill of material - fill subfile record                             
+      *                                                                         
+     C           S003A     BEGSR                                                
+      * get detail from item master, write to first line                        
+      * don't pick obsolete items or items with range of 998 or 999             
+"N"  C           SFLITM    CHAINF4101LB              35                         
+     C           *IN35     IFNE *ON                                             
+     C           IMSTKT    IFEQ 'O'                        obsolete             
+     C           IMSTKT    OREQ 'U'                        use up               
+     C           IMSRP4    OREQ '998'                      not for sale         
+     C           IMSRP4    OREQ '999'                      not for sale         
+     C           IMSRP4    OREQ '92'                       SMs                  
+ses14 * Chngd msg. Strugglinig with whether it is even relevant.                
+ses14 * If there is only 1 pack size it is helpful, but wen there are           
+ses14 * multiple pack sizes it is confusing to plant personnel.                 
+ses14 * Left it off. They should contact Production Control if pack             
+ses14 * size they want is not on list. t Production Control if pack             
+24779C***SES2014           MOVE ERSTKT    SCERR                                 
+ses14 * Chngd my mind. Message now says, if not listed contact Prd Ctl          
+ses14C                     CLEARSCERR                                           
+ses14C                     MOVELERSTKT    SCERR                                 
+     C                     GOTO S003AA                                          
+     C                     ENDIF                                                
+ses13 *                                                                         
+ses13 * MUST BE in forecast file F3460                                          
+ses13 *      multi-field KLIST, only 310 and IMITM necessary                    
+ses13 *      make certain they do not create 305 demand entry                   
+ses13C                     CLEARKYMCU                                           
+ses13C                     MOVE '310'     KYMCU  12                             
+ses13C           KY3460    KLIST                                                
+ses13C                     KFLD           IMITM                                 
+ses13C                     KFLD           KYMCU                                 
+ses13C           IMITM     CHAINF3460LB              35                         
+ses13C           *IN35     IFEQ *ON                                             
+ses13C                     CLEARSCERR                                           
+ses13C                     MOVELERFCST    SCERR                                 
+ses13C                     GOTO S003AA                                          
+ses13C                     ENDIF                                                
+      * get item description, shelf life days                                   
+     C                     MOVELIMITM     SFITM            short item           
+     C                     MOVELIMDSC1    SFDSC1           description          
+     C                     MOVELIMSRP4    SFSRP4           range code           
+     C                     MOVELIMUOM1    SFUOM1           UM                   
+      * get shelf life days from item branch                                    
+     C                     MOVE *BLANKS   IBSLD                                 
+     C                     MOVE *BLANKS   IBK1                                  
+     C                     MOVE *BLANKS   IBK2                                  
+     C                     MOVELSFLITM    IBK1             2nd item no          
+     C                     MOVE SFBMCU    IBK2             BOM whse             
+"N"  C           IBKEY     CHAINF4102L3              34                         
+     C           IBSLD     IFGT 0                                               
+     C                     MOVE *ON       *IN44                                 
+     C                     Z-ADDIBSLD     SFSLD            shelf life           
+26036C                     ELSE                                                 
+  |   * show error if shelf life days is zero                                   
+  |  C                     MOVE NDAY1     SFCITM           error text           
+  |  C                     MOVE NDAY2     SFCSC1           error text           
+  |  C                     MOVE *OFF      *IN44                                 
+  |  C                     GOTO S003AB                                          
+  |  C                     ENDIF                                                
+  |   * show error if PO line is canceled                                       
+  |  C           PDNXTR    IFEQ '999'                      closed               
+  |  C           PDLTTR    ANDLE'989'                      canceled             
+  |  C           PDLTTR    ANDGE'980'                      canceled             
+  |  C                     MOVE PO980     SFCITM           error text           
+  |  C                     MOVE *BLANKS   SFCSC1           error text           
+  |  C                     MOVE *OFF      *IN44                                 
+  |  C                     GOTO S003AB                                          
+  |  C                     ENDIF                                                
+  |   * show error if PO line is completed                                      
+  |  C           PDNXTR    IFEQ '999'                      closed               
+  |  C                     MOVE PO999     SFCITM           error text           
+  |  C                     MOVE *BLANKS   SFCSC1           error text           
+  |  C                     MOVE *OFF      *IN44                                 
+  |  C                     GOTO S003AB                                          
+26036C                     ENDIF                                                
+      * fall-thru, if label is not found, NOFND will show                       
+     C                     MOVELNOFND     SFCSC1           error text           
+26036C                     MOVE *BLANKS   SFCITM                                
+26036C                     MOVE *OFF      *IN44                                 
+      * get label part number and description                                   
+     C                     MOVE *BLANKS   IX2K1                                 
+     C                     MOVE *BLANKS   IX2K2                                 
+     C                     MOVE *BLANKS   IX2K3                                 
+     C                     MOVE *BLANKS   IX2K4                                 
+     C                     MOVE *BLANKS   IX2K5                                 
+     C                     MOVE *BLANKS   IX2K6                                 
+     C                     MOVE *BLANKS   IX2K7                                 
+      *                                                                         
+     C                     MOVE SFBMCU    IX2K1            BOM whse             
+     C                     MOVE IMITM     IX2K2            short item no        
+     C                     MOVE *BLANKS   CLITM                                 
+     C           IX2KY     SETLLF3002LA                                         
+      * read all the components in the BOM looking for                          
+      * the label entry that starts with L61                                    
+27566 * This depends on the front label being listed first                      
+27566 * in the Bill of Material. AND                                            
+27566 * the Hazard Label being the next item listed                             
+     C                     READ F3002LA                  35                     
+     C           IXKIT     DOWEQIMITM                                           
+     C           *IN34     ANDNE*ON                                             
+     C                     MOVE IXLITM    CLITM                                 
+     C           CLAB      IFEQ 'L61'                                           
+26036C                     MOVE *ON       *IN44                                 
+     C                     MOVE IXLITM    SFCITM                                
+      * get description for label                                               
+"N"  C           IXLITM    CHAINF4101LB              34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVELIMDSC1    SFCSC1                                
+     C                     ENDIF                                                
+     C                     ENDIF                                                
+     C                     READ F3002LA                  34                     
+27566C           *IN34     IFNE *ON                                             
+27566C                     MOVELIXLITM    $$LITM 25                             
+27566C                     ENDIF                                                
+     C                     ENDDO                                                
+26036C           S003AB    TAG                                                  
+     C                     ADD  1         RRN                                   
+     C           RRN       IFEQ 1                                               
+     C                     MOVE *ON       *IN43            pos cursor           
+     C                     ELSE                                                 
+     C                     MOVE *OFF      *IN43                                 
+     C                     ENDIF                                                
+26036 * plug ChemGes label type                                                 
+27566 *                    MOVE '05'      SFLT                                  
+27566 * get ChemGes label type based on next label numebr                       
+27566C                     MOVE *BLANKS   DRK1                                  
+27566C                     MOVE *BLANKS   DRK2                                  
+27566C                     MOVE *BLANKS   DRK3                                  
+27566C                     MOVEL'41'      DRK1                                  
+27566C                     MOVEL'CG'      DRK2                                  
+27566C                     MOVEL$$LITM    DRK3                                  
+27566C           DRKEY     CHAINF0005                34                         
+27566C           *IN34     IFNE *ON                                             
+27566C                     MOVELDRDL01    SFLT                                  
+27566C                     ELSE                                                 
+27566C                     MOVE '05'      SFLT                                  
+27566C                     ENDIF                                                
+26036 * origin from item balance - for fall-thru                                
+  |  C                     MOVE *BLANKS   IBK1                                  
+  |  C                     MOVE *BLANKS   IBK2                                  
+  |  C                     MOVELSFLITM    IBK1             2nd item no          
+  |  C                     MOVE SFLMCU    IBK2             lot whse             
+"N"  C           IBKEY     CHAINF4102L3              34                         
+  |  C           *IN34     IFEQ *OFF                                            
+  |  C                     MOVE IBORIG    SFORIG           origin               
+26036C                     ENDIF                                                
+     C                     WRITEDETAIL                                          
+     C                     ENDIF                                                
+     C           S003AA    TAG                                                  
+     C           S003AE    ENDSR                                                
+      *-----------------------------------------------------   S004             
+      * purchase order processing                                               
+      *                                                                         
+     C           S004      BEGSR                                                
+24779 *                                                                         
+24779C                     CLEARSCERR                                           
+      * read thru purchase order                                                
+      * present items with lot numbers                                          
+     C                     MOVE *BLANKS   PDK1             order no             
+     C                     MOVE *BLANKS   PDK2             order type           
+     C                     MOVE *BLANKS   PDK3             order co             
+     C                     MOVE *BLANKS   PDK4             order sufix          
+     C                     MOVE *BLANKS   PDK5             line number          
+     C                     MOVE @@DOCO    PDK1                                  
++++  C                     MOVE 'OP'      PDK2             purchase ord         
+     C                     EXSR CLRSF                                           
+     C                     MOVE *ON       *IN80                                 
+     C           PDKEY     SETLLI4311                                           
+     C                     READ I4311                    34                     
+     C           *IN34     DOUEQ*ON                                             
+     C           PDDOCO    ORNE PDK1                       PO number            
+24779C                     MOVE *OFF      *IN37                                 
+99999C                     CLEARWKMCU                                           
+     C           PDLOTN    IFGT *BLANKS                    lot number           
+99999C                     MOVELPDMCU     WKMCU                                 
+24779 ***===     PDMCU     IFNE PLT305                                          
+24779 ***===     PDMCU     ANDNEPLT306                                          
+24779C           WKMCU     IFNE PLT305                                          
+24779C           WKMCU     ANDNEPLT306                                          
+45251 * is this lot approved ?                                                  
+45251C                     MOVELPDLOTN    IO2K1     P                           
+45251C                     MOVE PDMCU     IO2K2     P                           
+24779C                     EXSR SRLOTN                                          
+24779C                     ENDIF                                                
+24779C           *IN37     IFEQ *OFF                                            
+     C                     MOVE PDLITM    SFLITM           2nd item no          
+     C                     MOVE PDMCU     SFLMCU           lot whse             
+     C                     MOVELPDLOTN    SFLOTN           lot no               
+      * use BOMs in 305 for purchased items                                     
+     C                     MOVE *BLANKS   SFBMCU           BOM whse             
+     C                     MOVE '305'     SFBMCU           BOM whse             
+     C                     MOVE *OFF      *IN80                                 
+     C                     EXSR S003A                                           
+24779C                     ENDIF                                                
+     C                     ENDIF                                                
+     C                     READ I4311                    34                     
+     C                     ENDDO                                                
+      * no hit, clear subfile, show error                                       
+     C           *IN80     IFEQ *ON                                             
+     C                     EXSR CLRSF                                           
+24779 ***                  MOVE ERPO      SCERR            bad WO               
+24779C                     MOVE ERPO1     SCERR            bad PO / Lot         
+     C                     Z-ADD1         RRN                                   
+     C                     ENDIF                                                
+     C           S004E     ENDSR                                                
+      *-----------------------------------------------------   S004A            
+      * purchase order processing - single line from Lot                        
+      *                                                                         
+     C           S004A     BEGSR                                                
+     C                     EXSR CLRSF                                           
+     C                     MOVE IOLITM    SFLITM           2nd item no          
+     C                     MOVE IOMCU     SFLMCU           lot whse             
+     C                     MOVELIOLOTN    SFLOTN           lot no               
+     C                     MOVE *BLANKS   SFBMCU           BOM whse             
+     C                     MOVE '305'     SFBMCU           BOM whse             
+     C                     EXSR S003A                                           
+     C           S004AE    ENDSR                                                
+      *-----------------------------------------------------   S005             
+      * work remote outq                                                        
+      *                                                                         
+     C           S005      BEGSR                                                
+     C                     MOVEA' '       CMD                                   
+     C                     MOVEACMDV,3    CMD                                   
+     C                     MOVEAENOQ      CMD,23                                
+     C                     Z-ADD33        CMDLTH 155                            
+     C                     CALL 'QCMDEXC'              34                       
+      *                    ---- ---------                                       
+     C                     PARM           CMD                                   
+     C                     PARM           CMDLTH                                
+      *                                                                         
+     C           S005E     ENDSR                                                
+      *------------------------------------------------------- S006             
+      * print test labels                                                       
+      *                                                                         
+     C           S006      BEGSR                                                
+      * override printer file to front label outq                               
+     C                     MOVEACMDV,1    CMD                                   
+     C                     MOVEABCFILE    CMD,14                                
+     C                     MOVEAENOQ1     CMD,29                                
+     C                     MOVEALBLNAM    CMD,51                                
+     C                     Z-ADD60        CMDLTH 155                            
+     C                     CALL 'QCMDEXC'              34                       
+      *                    ---- ---------                                       
+     C                     PARM           CMD                                   
+     C                     PARM           CMDLTH                                
+      * print test label                                                        
+     C                     MOVELTLAQ      LBLDEV 10                             
+     C                     Z-ADD1         ACROSS  20                            
+     C                     Z-ADD1         LBLQTY  40                            
+     C                     Z-ADD1         PERSET  40                            
+     C                     MOVE 'Y'       DEMAND  1                             
+     C                     MOVEL'L614TST 'LBLNAM                                
+      * print to a Zebra S4M                                                    
+     C* 203 pin            CALL 'Z4XI1024'                                      
+     C                     CALL 'Z7XI1024'                                      
+     C                     PARM           LBLNAM                                
+     C                     PARM           ACROSS                                
+     C                     PARM           LBLDEV                                
+     C                     PARM           LBLQTY                                
+     C                     PARM           DEMAND                                
+     C                     PARM           MRGDTA                                
+     C                     PARM           PERSET                                
+      * override printer file to hazard label outq                              
+     C                     MOVEACMDV,1    CMD                                   
+     C                     MOVEABCFILE    CMD,14                                
+     C                     MOVEAENOQ2     CMD,29                                
+     C                     MOVEALBLNAM    CMD,51                                
+     C                     Z-ADD60        CMDLTH 155                            
+     C                     CALL 'QCMDEXC'              34                       
+      *                    ---- ---------                                       
+     C                     PARM           CMD                                   
+     C                     PARM           CMDLTH                                
+      * print test label                                                        
+     C                     MOVELTLAQ      LBLDEV 10                             
+     C                     Z-ADD1         ACROSS  20                            
+     C                     Z-ADD1         LBLQTY  40                            
+     C                     Z-ADD1         PERSET  40                            
+     C                     MOVE 'Y'       DEMAND  1                             
+     C                     MOVEL'L614TST 'LBLNAM                                
+      * print to a Zebra S4M                                                    
+      * 203 pin            CALL 'Z4XI1024'                                      
+     C                     CALL 'Z7XI1024'                                      
+     C                     PARM           LBLNAM                                
+     C                     PARM           ACROSS                                
+     C                     PARM           LBLDEV                                
+     C                     PARM           LBLQTY                                
+     C                     PARM           DEMAND                                
+     C                     PARM           MRGDTA                                
+     C                     PARM           PERSET                                
+      * override printer file to carton label outq, if present                  
+     C           ENOQ3     IFGT *BLANKS                                         
+     C                     MOVEACMDV,1    CMD                                   
+     C                     MOVEABCFILE    CMD,14                                
+     C                     MOVEAENOQ3     CMD,29                                
+     C                     MOVEALBLNAM    CMD,51                                
+     C                     Z-ADD60        CMDLTH 155                            
+     C                     CALL 'QCMDEXC'              34                       
+      *                    ---- ---------                                       
+     C                     PARM           CMD                                   
+     C                     PARM           CMDLTH                                
+      * print test label                                                        
+     C                     MOVELTLAQ      LBLDEV 10                             
+     C                     Z-ADD1         ACROSS  20                            
+     C                     Z-ADD1         LBLQTY  40                            
+     C                     Z-ADD1         PERSET  40                            
+     C                     MOVE 'Y'       DEMAND  1                             
+     C                     MOVEL'L614TST 'LBLNAM                                
+      * print to a Zebra S4M                                                    
+      * 203 pin            CALL 'Z4XI1024'                                      
+     C                     CALL 'Z7XI1024'                                      
+     C                     PARM           LBLNAM                                
+     C                     PARM           ACROSS                                
+     C                     PARM           LBLDEV                                
+     C                     PARM           LBLQTY                                
+     C                     PARM           DEMAND                                
+     C                     PARM           MRGDTA                                
+     C                     PARM           PERSET                                
+     C                     ENDIF                                                
+      *                                                                         
+     C           S006E     ENDSR                                                
+      *------------------------------------------------------- S007             
+      * print product and box labels                                            
+      *                                                                         
+     C           S007      BEGSR                                                
+      * fill in the label fields in MRGDTA and MRGDT2                           
+     C                     MOVE *BLANKS   MRGDTA           product label        
+      * range name                                                              
+     C                     MOVE *BLANKS   DRK1                                  
+     C                     MOVE *BLANKS   DRK2                                  
+     C                     MOVE *BLANKS   DRK3                                  
+     C                     MOVE '41  '    SCSY    4                             
+     C                     MOVE 'S4'      SCRT    2                             
+     C                     MOVE SCSY      DRK1                                  
+     C                     MOVE SCRT      DRK2                                  
+     C                     MOVE SFSRP4    DRK3                                  
+"N"  C           DRKEY     CHAINI0005                34                         
+     C           *IN34     IFNE *ON                                             
+      * limit range name to 18 characters                                       
+     C                     MOVELDRDL01    WSRP18 18                             
+     C                     MOVELWSRP18    LBSRP4                                
+     C                     MOVELWSRP18    BBSRP4                                
+     C                     END                                                  
+      * item description                                                        
+     C                     MOVE SFDSC1    LBDSC1                                
+     C                     MOVE SFDSC1    BBDSC1                                
+      * item description - Spanish (not at this time)                           
+     C                     MOVE *BLANKS   LBDSC3                                
+     C                     MOVE *BLANKS   BBDSC3                                
+      * 2nd item number                                                         
+     C                     MOVE SFLITM    LBITM1                                
+     C                     MOVE SFLITM    BBITM1                                
+      * short item number formatting                                            
+     C                     MOVELBITM      LBITM                                 
+     C                     MOVE SFITM     LBITM                                 
+     C                     MOVE LBITM     BBITM                                 
+      * lot, use by date, and origin                                            
+     C                     EXSR S010                                            
+      * use work field to make up difference between Lot: and Batch:            
+     C                     MOVELBDOCO     LBDOCO           lot:                 
+     C                     MOVEL##LOTN    PAD    10        pad                  
+     C                     MOVE PAD       LBDOCO           front                
+     C                     MOVE LBDOCO    BBDOCO           box                  
+      * use by date - retrieve Gregorian format date using julian               
+"N"  C           ##MMEJ    CHAINF56365               34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVEL'Use by: 'LBUSBY                                
+     C                     MOVE GREDTE    LBUSBY                                
+     C                     MOVE LBUSBY    BBUSBY                                
+     C                     ENDIF                                                
+      * pack size                                                               
+     C                     MOVE *BLANKS   DRK1                                  
+     C                     MOVE *BLANKS   DRK2                                  
+     C                     MOVE *BLANKS   DRK3                                  
+     C                     MOVEL'00'      DRK1                                  
+     C                     MOVEL'UM'      DRK2                                  
+     C                     MOVE SFUOM1    DRK3                                  
+"N"  C           DRKEY     CHAINF0005                34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVE DRDL01    LBPACK                                
+     C                     MOVE DRDL01    BBPACK                                
+     C                     ENDIF                                                
+      * EAN-13 bar code                                                         
+     C                     MOVE '01'      EANCD1                                
+     C                     EXSR S008                                            
+     C                     MOVE '10'      EANCD3                                
+      *                                                                         
+     C                     MOVEL##LOTN    EANCD4                                
+     C                     MOVELEANCDE    LBCODE                                
+     C                     MOVELEANCDE    BBCODE                                
+      * get label format from UDC                                               
+     C                     MOVE *BLANKS   DRK1                                  
+     C                     MOVE *BLANKS   DRK2                                  
+     C                     MOVE *BLANKS   DRK3                                  
+     C                     MOVEL'56  '    SCSY    4                             
+     C                     MOVE 'FN'      SCRT    2                             
+     C                     MOVE SCSY      DRK1                                  
+     C                     MOVE SCRT      DRK2                                  
+     C                     MOVELSFCITM    DRK3                                  
+"N"  C           DRKEY     CHAINI0005                34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVELDRDL01    LBLNAM  8                             
+     C                     MOVEL'L616XX'  BBLNAM  8                             
+     C                     ELSE                                                 
+      * print msg on label - Form Number Not Found in UDC 56/FN                 
+     C                     MOVEL'L61ERROR'LBLNAM                                
+     C                     ENDIF                                                
+      * print product label                                                     
+     C           SFCQTY    IFGT 0                                               
+      * override printer file to appropriate outq                               
+     C                     MOVEACMDV,1    CMD                                   
+     C                     MOVEABCFILE    CMD,14                                
+     C                     MOVEAENOQ1     CMD,29                                
+     C                     MOVEALBLNAM    CMD,51                                
+     C                     Z-ADD60        CMDLTH 155                            
+     C                     CALL 'QCMDEXC'              34                       
+      *                    ---- ---------                                       
+     C                     PARM           CMD                                   
+     C                     PARM           CMDLTH                                
+      * LBLNAM is a TL Ashford label deffinition                                
+      * key LBLMENU then take option 1. to update                               
+     C                     MOVELTLAQ      LBLDEV 10                             
+     C                     Z-ADD1         ACROSS  20                            
+     C                     Z-ADDSFCQTY    LBLQTY  40                            
+     C                     Z-ADD1         PERSET  40                            
+     C                     MOVE 'Y'       DEMAND  1                             
+      * print to a Zebra S4M                                                    
+      * 203 pin            CALL 'Z4XI1024'                                      
+     C                     CALL 'Z7XI1024'                                      
+     C                     PARM           LBLNAM                                
+     C                     PARM           ACROSS                                
+     C                     PARM           LBLDEV                                
+     C                     PARM           LBLQTY                                
+     C                     PARM           DEMAND                                
+     C                     PARM           MRGDTA                                
+     C                     PARM           PERSET                                
+     C                     ENDIF                                                
+      * print box labels                                                        
+     C           SFBOX     IFGT 0                                               
+      * override pritner file to appropriate outq                               
+     C                     MOVEACMDV,1    CMD                                   
+     C                     MOVEABCFILE    CMD,14                                
+     C                     MOVEAENOQ3     CMD,29                                
+     C                     MOVEABBLNAM    CMD,51                                
+     C                     Z-ADD60        CMDLTH 155                            
+     C                     CALL 'QCMDEXC'              34                       
+      *                    ---- ---------                                       
+     C                     PARM           CMD                                   
+     C                     PARM           CMDLTH                                
+      *                                                                         
+     C                     MOVE *BLANKS   BBQTY                                 
+     C                     MOVEL'QTY:'    BBQTY                                 
+     C                     MOVE SFBQ      BQ2                                   
+      * supress leading zero of box qty is less than 10                         
+     C           SFBQ      IFGT 9                                               
+     C                     MOVE SFBQ      BBQTY                                 
+     C                     ELSE                                                 
+     C                     MOVELBQ1       BQH     2                             
+     C                     MOVE BQH       BBQTY                                 
+     C                     ENDIF                                                
+      * TL Ashford wants to see an outq from their list                         
+     C                     MOVELTLAQ      LBLDEV 10                             
+     C                     Z-ADD1         ACROSS  20                            
+     C                     Z-ADDSFBOX     LBLQTY  40                            
+     C                     Z-ADD1         PERSET  40                            
+     C                     MOVE 'Y'       DEMAND  1                             
+      * print to a Zebra S4M                                                    
+      * 203 pin            CALL 'Z4XI1024'                                      
+     C                     CALL 'Z7XI1024'                                      
+     C                     PARM           BBLNAM                                
+     C                     PARM           ACROSS                                
+     C                     PARM           LBLDEV                                
+     C                     PARM           LBLQTY                                
+     C                     PARM           DEMAND                                
+     C                     PARM           MRGDT2                                
+     C                     PARM           PERSET                                
+     C                     ENDIF                                                
+     C           S007E     ENDSR                                                
+      *------------------------------------------------------- S008             
+      * EAN.UCC GTIN retreive or create                                         
+      *                                                                         
+     C           S008      BEGSR                                                
+      * is it in the item cross reference?                                      
+     C           MPK1      KLIST                                                
+     C                     KFLD           IVXRT                                 
+     C                     KFLD           IVITM                                 
+     C                     MOVE 'G1'      IVXRT                                 
+     C                     MOVELSFITM     IVITM                                 
+     C           MPK1      CHAINF4104LD             N34                         
+      * not found - create Item Cross Reference record                          
+     C           *IN34     IFEQ *ON                                             
+      * get prefix: leading zero, country, company                              
+     C                     CLEARI0005U                                          
+     C                     MOVEL'41'      #USY                                  
+     C                     MOVE 'UC'      #URT                                  
+     C                     MOVEL'  PRE'   #UKY                                  
+     C                     CALL 'X0005 '               34                       
+      *                    ---- --------                                        
+     C                     PARM           I0005U                                
+     C                     MOVEL#UDL01    PREFIX                                
+      * get Next Number - 8th Value For System 41                               
+     C                     MOVE '41  '    NNSY                                  
+     C           NNSY      CHAINF0002                34                         
+     C           *IN34     IFEQ *OFF                                            
+     C                     Z-ADDNNN008    #NUM    50                            
+     C                     ADD  1         NNN008                                
+     C                     UPDATI0002                                           
+     C                     UNLCKF0002                                           
+     C                     ENDIF                                                
+      * calculate check digit                                                   
+     C                     MOVE PREF      WRKA                                  
+     C                     MOVE #NUM      WRKB                                  
+     C                     Z-ADD0         WRK1    50                            
+     C           NTM1      MULT 1         WRK1                                  
+     C                     ADD  WRK1      WRK2    50                            
+     C           NTM2      MULT 3         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM3      MULT 1         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM4      MULT 3         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM5      MULT 1         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM6      MULT 3         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM7      MULT 1         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM8      MULT 3         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM9      MULT 1         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM10     MULT 3         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM11     MULT 1         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           NTM12     MULT 3         WRK1                                  
+     C                     ADD  WRK1      WRK2                                  
+     C           WRK2      DIV  10        C1      50                            
+     C                     MVR            REMDR   20 51                         
+     C           *IN51     IFEQ *ON                                             
+     C                     ADD  1         C1                                    
+     C                     ENDIF                                                
+     C           C1        MULT 10        C1                                    
+     C           C1        SUB  WRK2      CHK     20                            
+     C                     MOVE CHK       CDIGIT                                
+     C                     MOVE #NUM      NITEM                                 
+     C                     MOVELGTBLD     EANCD2                                
+      * add item cross reference record                                         
+     C                     CLEARI4104                                           
+     C                     MOVE 'G1'      IVXRT                                 
+     C                     MOVELSFITM     IVITM                                 
+     C                     MOVEL'120001'  IVEXDJ                                
+     C                     MOVEL#SIDTE    IVEFTJ                                
+     C                     MOVELEANCD2    IVCITM                                
+     C                     MOVELLBDSC1    IVDSC1                                
+     C                     MOVELEANCD2    IVALN                                 
+     C                     MOVELIMLITM    IVLITM                                
+     C                     MOVELIMLITM    IVAITM                                
+     C                     MOVEL'P59521'  IVPID                                 
+     C                     MOVEL#SIDTE    IVUPMJ                                
+     C                     MOVEL$WK120    IVTDAY                                
+     C                     WRITEI4104                                           
+      * don't think we need an unlock here                                      
+      *                                                                         
+     C                     ELSE                                                 
+     C                     MOVELIVCITM    EANCD2                                
+     C                     ENDIF                                                
+     C           S008E     ENDSR                                                
+      *------------------------------------------------------- S009             
+      * hazard label printing                                                   
+      *                                                                         
+     C           S009      BEGSR                                                
+23278C                     MOVE *BLANKS   $$LITM 25                             
+23278C                     MOVE *BLANKS   $$TMPL 55                             
+23278C                     MOVE *BLANKS   $$QTY   3                             
+23278C                     MOVE *BLANKS   $$ITM   8                             
+23278C                     MOVE *BLANKS   $$DSC1 30                             
+23278C                     MOVE *BLANKS   $$SRP4  3                             
+23278C                     MOVE *BLANKS   $$PHOT 30                             
+23278C                     MOVE *BLANKS   $$OUTQ 10                             
+     C                     MOVE *BLANKS   CHEMD                                 
+     C                     MOVELSFITM     CMITM1           fall-thru            
+      * get item cross ref for MSDS for this item                               
+      * that will be the Product Code in ChemGes for the label                  
+     C                     MOVE 'MS'      IVXRT            x-ref type           
+     C                     MOVELSFITM     IVITM            short item           
+     C           MPK1      CHAINF4104LD             N34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVELIVCITM    CMITM1           MSDS number          
+     C                     ENDIF                                                
+23278C                     MOVELCMITM1    $$LITM           MSDS                 
+26370C                     MOVE SFLT      CMFMT                                 
+23278C                     MOVELSFLT      $$TMPL           template             
+     C                     MOVELSFDSC1    CMDSC1                                
+23278C                     MOVELSFDSC1    $$DSC1                                
+     C                     MOVELSFSRP4    CMSRP4                                
+23278C                     MOVELSFSRP4    $$SRP4                                
+      * get item cross ref for photochmically reactive                          
+     C                     MOVE 'PC'      IVXRT            x-ref type           
+     C* T23278             MOVELSFITM     IVITM            short item           
+23278C                     MOVELSFBITM    IVITM            bulk item            
+     C           MPK1      CHAINF4104LD             N34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVELIVDSC1    CMPC                                  
+23278C                     MOVELIVDSC1    $$PHOT                                
+     C                     ENDIF                                                
+     C                     MOVELSCOQ2     CMOUTQ                                
+23278C                     MOVELSCOQ2     $$OUTQ                                
+     C                     MOVE SFHQTY    CMQTY                                 
+23278C                     MOVE SFHQTY    $$QTY            qty labels           
+23278 * print with Wercs if bulk item has W6 item x-ref                         
+23278C                     MOVE 'W6'      IVXRT            x-ref type           
+23278C*                    MOVELSFITM     IVITM            short item           
+23278C                     MOVELSFBITM    IVITM            short item           
+23278C           MPK1      CHAINF4104LD             N34                         
+23278C           *IN34     IFNE *ON                                             
+23278 *                                                                         
+23278C                     MOVELSFITM     $$ITM            short item           
+23278C                     CALL 'J595131'                                       
+23278 *                    ---- ---------                                       
+23278C                     PARM           $$LITM                                
+23278C                     PARM           $$TMPL                                
+23278C                     PARM           $$QTY                                 
+23278C                     PARM           $$ITM                                 
+23278C                     PARM           $$DSC1                                
+23278C                     PARM           $$SRP4                                
+23278C                     PARM           $$PHOT                                
+23278C                     PARM           $$OUTQ                                
+      *                                                                         
+23278C                     ELSE                                                 
+23278 * otherwise print with ChemGes                                            
+      * this will FTP a trigger file to the ChemGes server SERSVR015            
+     C                     CALL 'J595121'                                       
+      *                    ---- ---------                                       
+     C                     PARM           CHEMD                                 
+23278C                     ENDIF                                                
+     C           S009E     ENDSR                                                
+      *------------------------------------------------------- S010             
+      * lot, use-by processing, origin                                          
+      *                                                                         
+     C           S010      BEGSR                                                
+      *                                                                         
+26036C                     MOVELSFLOTN    ##LOTN  8                             
+      * look for lot master for this canned product                             
+     C                     MOVE *BLANKS   IOK1                                  
+     C                     Z-ADD0         IOK2                                  
+     C                     MOVE *BLANKS   IOK3                                  
+26036C                     MOVELSFLOTN    IOK1             lot no               
+     C                     Z-ADDSFITM     IOK2             short item           
+     C                     MOVE SFLMCU    IOK3             lot whse             
+     C           IOKEY     CHAINF4108                34                         
+      * lot master found, check for lot exp date IOMMEJ                         
+     C           *IN34     IFNE *ON                                             
+     C           IOMMEJ    IFGT 0                                               
+     C                     Z-ADDIOMMEJ    ##MMEJ                                
+24779C                     UNLCKF4108                                           
+     C                     ELSE                                                 
+      * no date found in lot master, calc and update                            
+     C                     EXSR S011                       exp date             
+     C                     Z-ADD##MMEJ    IOMMEJ                                
+     C                     MOVE PGMID     IOPID            program              
+     C                     MOVE CURDTE    IOUPMJ           today                
+     C                     TIME           IOTDAY           time                 
+     C                     MOVE ENJOB     IOJOBN           job                  
+     C                     UPDATI4108                                           
+     C                     UNLCKF4108                                           
+24779C                     EXSR LOTLDG                                          
+     C                     ENDIF                                                
+     C                     ELSE                                                 
+      * no lot master, create record                                            
+     C                     CLEARI4108                                           
+26985 * get lot master for work order                                           
+  |  C           SCDTYP    IFEQ 'WO'                                            
+  |  C                     MOVE *BLANKS   IOK1                                  
+  |  C                     Z-ADD0         IOK2                                  
+  |  C                     MOVE *BLANKS   IOK3                                  
+  |  C                     MOVELSFLOTN    IOK1             lot no               
+  |  C                     Z-ADDSFBITM    IOK2             short item           
+  |  C                     MOVE SFLMCU    IOK3             wo whse              
+26985C           IOKEY     CHAINF4108                34                         
+T0012 * If parent WO lot status = Open or Pending inspection,                   
+T0012 *    force Pending inspection into lot for package WO                     
+T0012 *    This may not always be accurate for "O" types,                       
+T0012 *    but it will be better than we have now.                              
+T0012C                     SELEC                                                
+T0012C           IOLOTS    WHEQ 'O'                                             
+T0012C                     MOVEL'P'       IOLOTS                                
+T0012C                     MOVEL'PND'     IOLRP6                                
+T0012C                     MOVEL'QCR'     IOLRP7                                
+T0012C           IOLOTS    WHEQ 'P'                                             
+T0012C                     MOVEL'P'       IOLOTS                                
+T0012C                     MOVEL'PND'     IOLRP6                                
+T0012C                     MOVEL'QCR'     IOLRP7                                
+T0012C                     OTHER                                                
+T0012 * Use all values from lot for parent WO                                   
+T0012C                     ENDSL                                                
+T0012 *                                                                         
+26985C                     MOVE *BLANKS   IOLOT1           memo 1               
+  |  C                     MOVE *BLANKS   IOLOT2           memo 2               
+  |  C                     MOVE *BLANKS   IOLRP0           cat cde 10           
+  |  C                     MOVE *BLANKS   IODOCO           order no             
+  |  C                     MOVE *BLANKS   IODCTO           order type           
+  |  C                     MOVE *BLANKS   IOUA01           user date            
+  |  C                     MOVE *BLANKS   IOUA02                                
+  |  C                     MOVE *BLANKS   IOUA03                                
+  |  C                     MOVE *BLANKS   IOUA04                                
+  |  C                     MOVE *BLANKS   IOUA05                                
+  |  C                     MOVE *BLANKS   IOUA06                                
+  |  C                     MOVE *BLANKS   IOUB01           user qty             
+  |  C                     MOVE *BLANKS   IOUB02                                
+  |  C                     MOVE *BLANKS   IOUB03                                
+  |  C                     MOVE *BLANKS   IOUB04                                
+  |  C                     MOVE *BLANKS   IOUB05                                
+  |  C                     MOVE *BLANKS   IOUB06                                
+27173C                     ENDIF                                                
+  |  C           *IN34     IFNE *ON                                             
+  |  C                     ELSE                                                 
+26036C                     MOVELSFLOTN    IOLOTN           lot no               
+  |  C                     ENDIF                                                
+27173 *                    ENDIF                                                
+26985 * country of origin                                                       
+  |  C                     MOVE *BLANKS   DRK1                                  
+  |  C                     MOVE *BLANKS   DRK2                                  
+  |  C                     MOVE *BLANKS   DRK3                                  
+  |  C                     MOVEL'00'      DRK1                                  
+  |  C                     MOVEL'CO'      DRK2                                  
+  |  C           IOLRP1    IFEQ *BLANKS                                         
+  |  C                     MOVELSFORIG    WRK3    3        ib origin            
+  |  C                     ELSE                                                 
+  |  C                     MOVELIOLRP1    WRK3             lot origin           
+  |  C                     ENDIF                                                
+  |  C                     MOVE WRK3      DRK3                                  
+"N"  C           DRKEY     CHAINF0005                34                         
+  |  C           *IN34     IFNE *ON                                             
+  |  C                     MOVELDRDL01    BDLB                                  
+  |  C                     MOVEL'Origin:' BDLA                                  
+  |  C                     MOVELBDL02     LBDL02                                
+  |  C                     MOVELBDL02     BBDL02                                
+  |  C                     ENDIF                                                
+26985 *                                                                         
+     C                     EXSR S011                       exp date             
+     C                     MOVE SFLMCU    IOMCU            lot whse             
+     C                     MOVE SFITM     IOITM            short item           
+     C                     MOVE SFLITM    IOLITM           2nd item             
+     C                     MOVE SFLITM    IOAITM           3rd item             
+26985C                     MOVELSFDSC1    IOLDSC           desc                 
+     C                     Z-ADD##MMEJ    IOMMEJ           exp date             
+     C                     MOVE ENUID     IOUSER           user                 
+     C                     MOVE PGMID     IOPID            program              
+     C                     MOVE CURDTE    IOUPMJ           today                
+     C                     TIME           IOTDAY           time                 
+     C                     MOVE ENJOB     IOJOBN           job                  
+     C                     WRITEI4108                                           
+24779C                     EXSR LOTLDG                                          
+     C                     ENDIF                                                
+      *                                                                         
+      * create 310 lot master if dtaara D56410L = 1 (passed in plist)           
+     C           EN410L    IFEQ '1'                                             
+     C                     MOVE '310'     IOK3             bus unit             
+     C           IOKEY     CHAINF4108                34                         
+     C           *IN34     IFEQ *OFF                       found                
+      * found... check expiration date                                          
+     C           IOMMEJ    IFEQ 0                                               
+     C                     Z-ADD##MMEJ    IOMMEJ                                
+     C                     MOVE ENUID     IOUSER           user                 
+     C                     MOVE PGMID     IOPID            program              
+     C                     MOVE CURDTE    IOUPMJ           today                
+     C                     TIME           IOTDAY           time                 
+     C                     MOVE ENJOB     IOJOBN           job                  
+     C                     UPDATI4108                                           
+24779C                     EXSR LOTLDG                                          
+     C                     ENDIF                                                
+24779C                     UNLCKF4108                                           
+     C                     ELSE                            not found            
+     C                     MOVE '310'     IOMCU                                 
+24779 * if the source record is in pending status,                              
+24779 *    the 310 record should not create inspection record also              
+24779 *    this scenario should not come up often.                              
+24779C           IOLOTS    IFEQ 'P'                                             
+24779C           IOLRP6    ANDNE'PND'                                           
+24779C                     MOVEL'PND'     IOLRP6                                
+24779C                     ENDIF                                                
+     C                     WRITEI4108                                           
+24779C           IOMMEJ    IFNE 0                                               
+  |  C                     EXSR LOTLDG                                          
+24779C                     ENDIF                                                
+     C                     ENDIF                                                
+     C                     ENDIF                                                
+      *                    FEOD F4108                                           
+     C                     UNLCKF4108                                           
+     C           S010E     ENDSR                                                
+      *------------------------------------------------------- S011             
+      * calculate expiration date (use-by date)                                 
+      *                                                                         
+     C           S011      BEGSR                                                
+      * move shelf life days into offset                                        
+     C                     MOVE *BLANKS   $OFSET                                
+     C           SFSLD     IFLT 1000                                            
+     C                     MOVE SFSLD     WSLD3   3                             
+     C           WSLD3     CAT  '+':0     $OFSET                                
+     C                     ELSE                                                 
+     C                     MOVE SFSLD     WSLD4   4                             
+     C           WSLD4     CAT  '+':0     $OFSET                                
+     C                     ENDIF                                                
+      * SVSTRX is the bulk work order close date                                
+      * or today's date if that is missing                                      
+     C                     MOVELSVSTRX    $SIDAT    P                           
+     C                     CALL 'X0027'                                         
+      *                    ---- -------                                         
+     C                     PARM           $SIDAT 25                             
+     C                     PARM *BLANK    $CTRY   2                             
+     C                     PARM '*JUL    '$FFMT   8                             
+     C                     PARM           $OFSET  6                             
+     C                     PARM '*DAY    '$INTVL  8                             
+     C                     PARM           $SODAT  6                             
+     C                     PARM '*JUL    '$TFMT   8                             
+     C                     PARM *BLANK    $ERROR  1                             
+      *                                                                         
+     C                     MOVE $SODAT    ##MMEJ  60                            
+     C           S011E     ENDSR                                                
+24779 *------------------------------------------------------- srlotn           
+24779 * validate lot for this record. must be approved to print labels          
+24779 *                                                                         
+24779C           SRLOTN    BEGSR                                                
+24779 *                                                                         
+11994 * Interrogate lot status to determine if labels can print                 
+11994C                     MOVE *OFF      LOTCK   1                             
+24779C                     MOVE *OFF      *IN37                                 
+11994C                     MOVE *OFF      *IN38                                 
+24779C           IO2KEY    CHAINI4108B               37                         
+24779C           *IN37     IFEQ *OFF                                            
+24779C*****      IOLOTS    ANDNE*BLANKS                                         
+11994 * Is this 2 tier validation                                               
+11994C                     MOVE *BLANKS   DRK1                                  
+11994C                     MOVE *BLANKS   DRK2                                  
+11994C                     MOVE *BLANKS   DRK3                                  
+11994 * 2 approaches: Only if lot status and iolrp5 <> *blank                   
+11994 *   or crate UDC 41, L5 entry for blank status and always chk             
+11994C           IOLOTS    IFNE *BLANKS                                         
+11994C           IOLRP5    ANDNE*BLANKS                                         
+11994C                     MOVEL'41'      DRK1                                  
+11994C                     MOVEL'L5'      DRK2                                  
+11994C                     MOVE IOLRP5    DRK3                                  
+11994C           DRKEY     CHAINF0005                38                         
+11994C           *IN38     IFEQ *OFF                                            
+11994C                     MOVELDRDL02    LOTCK                                 
+11994C                     ENDIF                                                
+11994C                     ENDIF                                                
+11994 *                                                                         
+11994C           IOLOTS    IFNE *BLANKS                                         
+11994C           IOLOTS    ANDNELOTCK                                           
+99999C           WKMCU     ANDNEPLT305                                          
+99999C           WKMCU     ANDNEPLT306                                          
+99999 * applies to all branches                                                 
+99999 ***===     *IN37     OREQ *OFF                                            
+99999 ***===     IOLOTS    ANDEQ'O'                                             
+24779C           *IN37     OREQ *ON                                             
+24779 * lot not approved or not found                                           
+24779C           SCDTYP    IFEQ 'WO'                                            
+24779 * if this is WO label request, initialize subfile                         
+24779C                     EXSR CLRSF                                           
+      *                                                                         
+23278C           IOLOTS    IFEQ 'P'                                             
+23278C                     MOVE ERQC1     SCERR            iolots = P  lanks    
+23278C                     ELSE                                                 
+24779C                     MOVE ERQC      SCERR            iolots <> *blanks    
+23278C                     ENDIF                                                
+24779C                     Z-ADD1         RRN                                   
+24779C                     ENDIF                                                
+11994C                     ENDIF                                                
+24779C                     ENDIF                                                
+24779 *                                                                         
+24779C                     ENDSR                                                
+24779 *------------------------------------------------------- lotldg           
+  |   * create lot expiration origination ledger record                         
+  |   *                                                                         
+  |  C           LOTLDG    BEGSR                                                
+  |   * create lot status change ledger entry                                   
+  |  C                     CLEARD4111                                           
+  |   *                                                                         
+  |  C                     MOVELLTORIG    ILTREX                                
+  |   * populate lot master values                                              
+  |  C                     MOVE IOLOTS    ILLOTS                                
+  |  C                     MOVELIOLOTN    ILLOTN                                
+  |  C                     MOVELIOITM     ILITM                                 
+  |  C                     MOVELIOLITM    ILLITM                                
+  |  C                     MOVELIOAITM    ILAITM                                
+  |  C                     MOVE IOMCU     ILMCU                                 
+  |  C                     MOVE IOKCOO    ILKCOO                                
+  |  C                     MOVE IOLOTG    ILLOTG                                
+  |  C                     MOVE IOLOTP    ILLOTP                                
+  |   *                                                                         
+  |  C* n/a                MOVE IBGLPT    ILGLPT                                
+  |  C                     Z-ADD59513     ILDOC                                 
+  |  C                     MOVE 'LO'      ILDCT                                 
+  |   * a "Y" in ILLMCX displays *** Lot Master Ledger *** in                   
+  |   *       V4111W ledger detail window header                                
+  |  C                     MOVE 'Y'       ILLMCX                                
+  |  C                     MOVE 'X'       ILIPCD                                
+  |   * status change, do not pass quantity                                     
+  |  C                     Z-ADD0         ILTRQT                                
+  |   *                                                                         
+  |  C                     MOVE SVSTRX    ILTRDJ           Date                 
+  |  C                     MOVE SVSTRX    ILCRDJ           Date                 
+  |  C                     MOVE PGMID     ILPID            Program ID           
+  |  C                     MOVE ENJOB     ILTERM           Job Name             
+  |  C                     MOVE ENUID     ILUSER           User                 
+  |  C                     MOVE $WK120    ILTDAY           Time of Day          
+  |   * Write Inventory Ledger record (F4111).                                  
+  |  C                     CALL 'X4111   '             92                       
+  |   *                    ---- ----------                                      
+  |  C                     PARM           D4111                                 
+  |   *                                                                         
+24779C                     ENDSR                                                
+      *------------------------------------------------------- S999             
+      * housekeeping                                                            
+      *                                                                         
+     C           S999      BEGSR                                                
+      * parms passed from calling program                                       
+     C           *ENTRY    PLIST                                                
+     C                     PARM           ENMCU   3        calling whse         
+     C                     PARM           ENOQ1  10        front outq           
+     C                     PARM           ENOQ1T 50        outq desc            
+     C                     PARM           ENOQ2  10        hazard outq          
+     C                     PARM           ENOQ2T 50        outq desc            
+     C                     PARM           ENOQ3  10        box outq             
+     C                     PARM           ENOQ3T 50        outq desc            
+     C                     PARM           ENOQ   10        wrkoutq que*         
+     C                     PARM           EN410L  1        create 310           
+     C                     PARM           ENJOB  10        job name             
+     C                     PARM           ENUID  10        user id              
+      * F0005 user defined codes                                                
+     C           DRKEY     KLIST                                                
+     C                     KFLD           DRK1    4                             
+     C                     KFLD           DRK2    2                             
+     C                     KFLD           DRK3   10                             
+      * F4102 item warehouse                                                    
+     C           IBKEY     KLIST                                                
+     C                     KFLD           IBK1   25                             
+     C                     KFLD           IBK2   12                             
+      * F4108 lot master                                                        
+     C           IOKEY     KLIST                                                
+     C                     KFLD           IOK1   30                             
+     C                     KFLD           IOK2    80                            
+     C                     KFLD           IOK3   12                             
+      * F4108L2 lot master                                                      
+     C           IO2KEY    KLIST                                                
+     C                     KFLD           IO2K1  30                             
+     C                     KFLD           IO2K2  12                             
+      * F3002 bill of material                                                  
+     C           IXKEY     KLIST                                                
+     C                     KFLD           IXK1   25                             
+     C                     KFLD           IXK2   25                             
+     C                     KFLD           IXK3   12                             
+      * F3002 bill of material                                                  
+     C           IX2KY     KLIST                                                
+     C                     KFLD           IX2K1  12                             
+     C                     KFLD           IX2K2   80                            
+     C                     KFLD           IX2K3   3                             
+     C                     KFLD           IX2K4  150                            
+     C                     KFLD           IX2K5   40                            
+     C                     KFLD           IX2K6   50                            
+     C                     KFLD           IX2K7   1                             
+      * F4311 purchase order detail                                             
+     C           PDKEY     KLIST                                                
+     C                     KFLD           PDK1    80                            
+     C                     KFLD           PDK2    2                             
+     C                     KFLD           PDK3    5                             
+     C                     KFLD           PDK4    3                             
+     C                     KFLD           PDK5    60                            
+      * convert current date to julian                                          
+     C                     TIME           $WK120 120                            
+     C                     MOVE $WK120    CURDTE  60                            
+     C                     MOVE CURDTE    #SIDTE  6                             
+     C                     MOVE *BLANK    #EDAT   8                             
+     C                     MOVEL'*MDY    '#FFMT   7                             
+     C                     MOVEL'*JUL    '#TFMT   7                             
+     C                     MOVEL'*NONE   '#SEP    7                             
+     C                     MOVE ' '       $ERTST  1                             
+     C                     CALL 'X0028   '             34                       
+      *                    ---- ----------                                      
+     C                     PARM           #SIDTE                                
+     C                     PARM           #EDAT                                 
+     C                     PARM           #FFMT                                 
+     C                     PARM           #TFMT                                 
+     C                     PARM           #SEP                                  
+     C                     PARM           $ERTST                                
+     C                     MOVE #SIDTE    CURDTE                                
+      * save as fall-thru for work order close date                             
+     C                     MOVE #SIDTE    SVSTRX  60                            
+     C                     MOVE #SIDTE    ##STRX  60                            
+      * $INIT has run                                                           
+     C                     MOVE *ON       *IN98                                 
+      * pass input parms to screen                                              
+     C                     MOVE ENMCU     SCMCU            calling whse         
+     C                     MOVELENOQ1     SCOQ1            front label que      
+     C                     MOVELENOQ1T    SCTXT1           que desc             
+     C                     MOVELENOQ2     SCOQ2            hazard label que     
+     C                     MOVELENOQ2T    SCTXT2           que desc             
+     C                     MOVELENOQ3     SCOQ3            box label que        
+     C                     MOVELENOQ3T    SCTXT3           que desc             
+      * display box label info if printer specified                             
+     C           ENOQ3     IFGT *BLANKS                                         
+     C                     MOVE *ON       *IN48                                 
+     C                     ENDIF                                                
+      * get location name from UDC                                              
+     C                     MOVE *BLANKS   DRK1                                  
+     C                     MOVE *BLANKS   DRK2                                  
+     C                     MOVE *BLANKS   DRK3                                  
+     C                     MOVE '01  '    SCSY    4                             
+     C                     MOVE '03'      SCRT    2                             
+     C                     MOVE SCSY      DRK1             sys code             
+     C                     MOVE SCRT      DRK2             UDC code             
+     C                     MOVE ENMCU     DRK3             calling whse         
+"N"  C           DRKEY     CHAINI0005                34                         
+     C           *IN34     IFNE *ON                                             
+     C                     MOVE DRDL01    SCDL01           whse desc            
+     C                     END                                                  
+      * program ID                                                              
+     C                     MOVEL'P59513'  PGMID  10                             
+      * put blanks in first record of subfiule                                  
+     C                     Z-ADD1         RRN     30                            
+     C                     MOVE *BLANKS   SFCQTY                                
+     C                     MOVE *BLANKS   SFHQTY                                
+     C                     MOVE *BLANKS   SFBOX                                 
+     C                     MOVE *BLANKS   SFBQ                                  
+     C                     WRITEDETAIL                                          
+      * clear subfile                                                           
+     C                     EXSR CLRSF                                           
+      *                                                                         
+     C           S999E     ENDSR                                                
+** override print file command (compile time array)                             
+OVRPRTF FILE(        ) OUTQ(          ) FORMTYPE(L         )                    
+DLTOVR FILE(*ALL)                                                               
+WRKRMTOUTQ OUTQ(*LIBL/          )                                               

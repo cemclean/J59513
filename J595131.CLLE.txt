@@ -1,0 +1,124 @@
+/*------------------------------------------------------------------- +                             
+ *                                                                    +                             
+ *  WERCs Print Hazard - Insert Rows                                  +                             
+ *    Look up CIF email address(es) and write record to F59513        +                             
+ *    Write records to F59513A, add'l label data items                +                             
+ *                                                                    +                             
+ *    Read F59513AL1, insert rows in WERCs SQL table i_label_details  +                             
+ *    See properties files in \FSUS\Jars\P59513AJ1 folder             +                             
+ *                                                                    +                             
+ *    Read F59513L1, insert rows in WERCs SQL table i_labels          +                             
+ *      i_labels is monitored by WERCs                                +                             
+ *      inserteing a row will call the label print routine            +                             
+ *    See properties files in \FSUS\Jars\P59513J1 folder              +                             
+ *                                                                    +                             
+ *  T28225  07.22.2011 Charlie McLean                                 +                             
+ *          Project started                                           +                             
+ *                                                                    +                             
+ *-------------------------------------------------------------------*/                             
+                                                                                                    
+             PGM        PARM(&W3LITM +                                                              
+                             &W3TMPL +                                                              
+                             &W3QTY  +                                                              
+                             &W3ITM  +                                                              
+                             &W4DSC1 +                                                              
+                             &W4SRP4 +                                                              
+                             &W4PHOT +                                                              
+                             &W3OUTQ)                                                               
+                                                                                                    
+             DCL        &W3LITM  *CHAR LEN(25)                                                      
+             DCL        &W3TMPL  *CHAR LEN(2)                                                       
+             DCL        &W3QTY   *CHAR LEN(3)                                                       
+             DCL        &W3ITM   *CHAR LEN(8)                                                       
+             DCL        &W4DSC1  *CHAR LEN(30)                                                      
+             DCL        &W4SRP4  *CHAR LEN(3)                                                       
+             DCL        &W4PHOT  *CHAR LEN(30)                                                      
+             DCL        &W3OUTQ  *CHAR LEN(10)                                                      
+                                                                                                    
+             DCL        &CDLEN   *DEC  LEN(7 0)                                                     
+             DCL        &CURDIR  *CHAR LEN(128)                                                     
+             DCL        &TYPE    *CHAR LEN(1)                                                       
+                                                                                                    
+/*------------------------------------------------------------------- +                             
+ * main                                                               +                             
+ *------------------------------------------------------------------- */                            
+                                                                                                    
+/* Notes for testing:                                                +                              
+ *   Run interactively by allowing the following GOTO staement       +                              
+ *   Run Java programs in QSH for maximum visibility                 +                              
+ *     comment out RUNJVA lines and allow QSH lines                  */                             
+                                                                                                    
+/*           GOTO       CMDLBL(NOBATCH)                              */                             
+                                                                                                    
+/* submit to batch if interactive                                    */                             
+             RTVJOBA    TYPE(&TYPE)                                                                 
+             IF         COND(&TYPE *EQ '1') THEN(DO)                                                
+             SBMJOB     CMD(CALL PGM(J595131) PARM(&W3LITM  +                                       
+                                                   &W3TMPL  +                                       
+                                                   &W3QTY   +                                       
+                                                   &W3ITM   +                                       
+                                                   &W4DSC1  +                                       
+                                                   &W4SRP4  +                                       
+                                                   &W4PHOT  +                                       
+                                                   &W3OUTQ))                                        
+             GOTO       CMDLBL(END)                                                                 
+             ENDDO                                                                                  
+                                                                                                    
+/*           CHGJOB     LOG(0 0 *NOLIST) LOGCLPGM(*NO)               */                             
+             CHGJOB     LOG(4 99 *SECLVL) LOGCLPGM(*YES)                                            
+                                                                                                    
+/* look up CIF email address and write recrod to F59513              +                              
+ * write records to F59513A                                          */                             
+             CALL       PGM(P595131) PARM(&W3LITM  +                                                
+                                          &W3TMPL  +                                                
+                                          &W3QTY   +                                                
+                                          &W3ITM   +                                                
+                                          &W4DSC1  +                                                
+                                          &W4SRP4  +                                                
+                                          &W4PHOT  +                                                
+                                          &W3OUTQ)                                                  
+                                                                                                    
+NOBATCH:                                                                                            
+                                                                                                    
+/* save current directory for restore                                */                             
+             RTVCURDIR  RTNDIR(&CURDIR) DIRNAMLEN(&CDLEN)                                           
+             CHGJOB     CCSID(37)                                                                   
+                                                                                                    
+             ADDENVVAR  ENVVAR(QIBM_MULTI_THREADED) VALUE(Y) +                                      
+                          REPLACE(*YES)                                                             
+                                                                                                    
+             ADDENVVAR  ENVVAR(JAVA_HOME) +                                                         
+                          VALUE('/QIBM/ProdData/Java400/jdk14') +                                   
+                          REPLACE(*YES)                                                             
+                                                                                                    
+/* insert rows in table i_label_details from data stage F59513AL1    */                             
+             ADDENVVAR  ENVVAR(CLASSPATH) +                                                         
+                VALUE('/QIBM/ProdData/Java400/ext/db2_classes.jar:+                                 
+                       /QIBM/ProdData/HTTP/Public/jt400/lib/jt400.jar:+                             
+                       /FSUS/Jars/P59513AJ1/lib/jtds-1.2.5.jar:+                                    
+                       /FSUS/Jars/P59513AJ1/lib/log4j-1.2.9.jar:+                                   
+                       /FSUS/Jars/P59513AJ1/P59513AJ1.jar') +                                       
+                          REPLACE(*YES)                                                             
+                                                                                                    
+             CHGCURDIR  DIR('/FSUS/Jars/P59513AJ1')                                                 
+             RUNJVA     CLASS(main.P59513AJ1)                                                       
+/*           QSH        CMD('java -verbose main.P59513AJ1')          */                             
+                                                                                                    
+/* insert rows in table i_labels from data stage F59513L1            */                             
+             ADDENVVAR  ENVVAR(CLASSPATH) +                                                         
+                VALUE('/QIBM/ProdData/Java400/ext/db2_classes.jar:+                                 
+                       /QIBM/ProdData/HTTP/Public/jt400/lib/jt400.jar:+                             
+                       /FSUS/Jars/P59513J1/lib/jtds-1.2.5.jar:+                                     
+                       /FSUS/Jars/P59513J1/lib/log4j-1.2.9.jar:+                                    
+                       /FSUS/Jars/P59513J1/P59513J1.jar') +                                         
+                          REPLACE(*YES)                                                             
+                                                                                                    
+             CHGCURDIR  DIR('/FSUS/Jars/P59513J1')                                                  
+             RUNJVA     CLASS(main.P59513J1)                                                        
+/*           QSH        CMD('java -verbose main.P59513J1')           */                             
+                                                                                                    
+/* return to saved directory                                         */                             
+              CHGCURDIR  DIR(&CURDIR)                                                               
+                                                                                                    
+END:          ENDPGM                                                                                
+                                                                                                    

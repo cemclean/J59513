@@ -1,0 +1,64 @@
+/*-------------------------------------------------------------------*/         
+/* Print Can Labels WMS 310 NKC Distribution                         */         
+/*                                                                   */         
+/* CC27029 03.20.2009 Charlie McLean                                 */         
+/*         Project started                                           */         
+/*                                                                   */         
+/* begin program                                                     */         
+/*                                                                   */         
+/* T20100510.0148 - M. Sesler                                        */         
+/*         May 2010                                                  */         
+/*         Allow Production Ctl printer to create 310 lot masters    */         
+/*-------------------------------------------------------------------*/         
+ START:      PGM                                                                
+                                                                                
+/*           Variables                                               */         
+/*-------------------------------------------------------------------*/         
+             DCL        &SCMCU *CHAR LEN(3) +                                   
+                          VALUE('310')        /* Branch              */         
+             DCL        &SCOQ1  *CHAR LEN(10) +                                 
+                          VALUE('LBL31001A')  /* Front Printer       */         
+             DCL        &SCOQ1T *CHAR LEN(50) /* Text                */         
+             DCL        &SCOQ2  *CHAR LEN(10) +                                 
+                          VALUE('LBL31001B')  /* Hazard Printer      */         
+             DCL        &SCOQ2T *CHAR LEN(50) /* Text                */         
+             DCL        &SCOQ3  *CHAR LEN(10) +                                 
+                          VALUE('         ')  /* Box Label Printer   */         
+             DCL        &SCOQ3T *CHAR LEN(50) /* Text                */         
+             DCL        &SCOQ   *CHAR LEN(10) +                                 
+                          VALUE('LBL31001*')  /* wrkrmtoutq parm     */         
+             DCL        &D56410L *CHAR LEN(1) +                                 
+                          VALUE(' ')          /* create 310 LM       */         
+             DCL        &JOB    *CHAR LEN(10) /* job name            */         
+             DCL        &USER   *CHAR LEN(10) /* user id             */         
+                                                                                
+/*           Program Monitor Messages                                */         
+/*-------------------------------------------------------------------*/         
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(STDERR))                
+                                                                                
+/*           Mainline Program                                        */         
+/*-------------------------------------------------------------------*/         
+             RTVOBJD    OBJ(&SCOQ1) OBJTYPE(*OUTQ) TEXT(&SCOQ1T)                
+             RTVOBJD    OBJ(&SCOQ2) OBJTYPE(*OUTQ) TEXT(&SCOQ2T)                
+/*           RTVOBJD    OBJ(&SCOQ3) OBJTYPE(*OUTQ) TEXT(&SCOQ3T)     */         
+             MONMSG     MSGID(CPF2103) /* already exists */                     
+/*  D56410L determines if a 310 lot record is to be created          */         
+             RTVDTAARA  DTAARA(D56410L) RTNVAR(&D56410L)                        
+             RTVJOBA    JOB(&JOB) USER(&USER)                                   
+             CALL       PGM(P59513) PARM(&SCMCU &SCOQ1 &SCOQ1T +                
+                          &SCOQ2 &SCOQ2T &SCOQ3 &SCOQ3T &SCOQ +                 
+                          &D56410L &JOB &USER)                                  
+                                                                                
+/*           Normal End of Program                                   */         
+/*-------------------------------------------------------------------*/         
+                                                                                
+             RETURN                                                             
+                                                                                
+/*           Standard Error Handeling                                */         
+/*-------------------------------------------------------------------*/         
+ STDERR:                                                                        
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) +                          
+                          MSGDTA('Program aborted on an expected +              
+                          escape mesage.') MSGTYPE(*ESCAPE)                     
+                                                                                
+ END:        ENDPGM                                                             
