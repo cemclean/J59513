@@ -1,0 +1,161 @@
+     A*--------------------------------------------------------------           
+     A*    File: V59513                                                         
+     A*    Text: Print Can Labels - WMS                                         
+     A*    Date: 06.26.2008                                                     
+     A*  Author: Charlie McLean                                                 
+     A* Project: CC26036                                                        
+     A*                                                                         
+     A*--------------------------------------------------------------           
+     A* Function: Print Can Labels from four sources:                           
+     A*             1. Bulk Work Order                                          
+     A*                - List all pack sizes                                    
+     A*                - For each pack size to print:                           
+     A*                  o Check for Lot Master Record                          
+     A*                  o Create if not found                                  
+     A*                  o Update Expiration Date if blank. Use                 
+     A*                    Work Order close. If blank use today.                
+     A*                  o Use Lot No of Bulk for all canned item               
+     A*                - Canning work orders will be created with               
+     A*                  a scan/entry process after canning is done             
+     A*             2. Canning Work Order - RMs and SMs                         
+     A*                - List pack size of finished good                        
+     A*                - Lot Master is created with Work Order                  
+     A*                - Print using same routine as above                      
+     A*             3. Lot Number - Repritn or Repack                           
+     A*                - Find Bulk Work Order                                   
+     A*                - Process as No. 1 above                                 
+     A*             4. Purchase Order                                           
+     A*                - Show only pack sizes on PO                             
+     A*                - Error condition is no Lot Master                       
+     A*                - Update Expiration Date using today's date              
+     A*                                                                         
+     A*--------------------------------------------------------------           
+     A* Modifications                                                           
+     A*--------------------------------------------------------------           
+     A* CC26036 06.26.2008  Charlie McLean                                      
+     A*         Copied from V59512                                              
+     A*                                                                         
+     A*--------------------------------------------------------------           
+     A* Begin Specifications                                                    
+     A*--------------------------------------------------------------           
+     A                                      INDARA                              
+     A                                      CA03(03 'Exit')                     
+     A                                      CA08(08 'View Outq')                
+     A                                      CA17(17 'Test Print')               
+     A                                      PRINT                               
+     A          R DETAIL                    SFL                                 
+     A            SFITM     R        H      REFFLD(IMITM  F4101)                
+     A            SFBITM    R        H      REFFLD(IMITM  F4101)                
+     A            SFSRP4    R        H      REFFLD(IMSRP4 F4101)                
+     A            SFUOM1    R        H      REFFLD(IMUOM1 F4101)                
+     A            SFLOTN    R        H      REFFLD(IOLOTN F4108)                
+     A            SFBMCU    R        H      REFFLD(PDMCU  F4311)                
+     A            SFLMCU    R        H      REFFLD(PDMCU  F4311)                
+     A            SFSLD     R        H      REFFLD(IBSLD  F4102)                
+     A            SFORIG    R        H      REFFLD(IBORIG F4102)                
+     A            SFLITM    R        O 10 10REFFLD(IMLITM F4101)                
+     A            SFDSC1    R        O 10 36REFFLD(IMDSC1 F4101)                
+     A* second line                                                             
+     A            SFCQTY         3Y 0B 11  2EDTCDE(4)                           
+     A  43                                  DSPATR(PC)                          
+     A N44                                  DSPATR(RI)                          
+     A N44                                  DSPATR(PR)                          
+     A            SFHQTY         3Y 0B 11  6EDTCDE(4)                           
+     A N44                                  DSPATR(RI)                          
+     A N44                                  DSPATR(PR)                          
+     A            SFCITM    R        O 11 10REFFLD(IMLITM F4101)                
+     A N44                                  DSPATR(RI)                          
+     A                                      DSPATR(UL)                          
+     A            SFCSC1    R        O 11 36REFFLD(IMDSC1 F4101)                
+     A N44                                  DSPATR(RI)                          
+     A                                      DSPATR(UL)                          
+     A            SFBOX          2Y 0B 11 67EDTCDE(4)                           
+     A N44                                  DSPATR(RI)                          
+     A N44                                  DSPATR(PR)                          
+     A            SFBQ           2Y 0B 11 71EDTCDE(4)                           
+     A N44                                  DSPATR(RI)                          
+     A N44                                  DSPATR(PR)                          
+     A            SFLT           2Y 0O 11 77                                    
+     A*           SFLT           2Y 0Y 11 77EDTCDE(4)                           
+     A*N44                                  DSPATR(RI)                          
+     A*N44                                  DSPATR(PR)                          
+      *                                                                         
+     A          R HEADER                    SFLCTL(DETAIL)                      
+     A  90                                  SFLEND(*MORE)                       
+     A                                      SFLSIZ(0007)                        
+     A                                      SFLPAG(0006)                        
+     A N90                                  ROLLUP                              
+     A                                      OVERLAY                             
+     A  31                                  SFLDSP                              
+     A  31                                  SFLDSPCTL                           
+     A N31                                  SFLCLR                              
+      *                                                                         
+     A                                  1  2'59513'                             
+     A                                      COLOR(BLU)                          
+     A                                  1 27'* * Print Product Labels * *'      
+     A                                      DSPATR(HI)                          
+     A                                  1 72DATE                                
+     A                                      EDTWRD('  .  .  ')                  
+      *                                                                         
+     A                                  3  2'Document Number:'                  
+     A                                  4  2'Warehouse . . . . . :'             
+     A                                  5  2'Front Label Printer :'             
+     A                                  6  2'Hazard Label Printer:'             
+     A                                  7  2'Box Label Printer . :'             
+     A N48                                   DSPATR(ND)                         
+     A            SCDOCO         8   B  3 24                                    
+     A  80                                  DSPATR(RI)                          
+     A            SCDTYP         2   B  3 33                                    
+     A            SCMCU          3A  O  4 24                                    
+     A            SCERR         40A  O  3 36                                    
+     A  80                                  DSPATR(RI)                          
+     A            SCDL01        30A  O  4 35                                    
+     A            SCOQ1         10A  O  5 24                                    
+     A            SCTXT1        45A  O  5 35                                    
+     A            SCOQ2         10A  O  6 24                                    
+     A            SCTXT2        45A  O  6 35                                    
+     A            SCOQ3         10A  O  7 24                                    
+     A N48                                   DSPATR(ND)                         
+     A            SCTXT3        45A  O  7 35                                    
+     A N48                                   DSPATR(ND)                         
+      *                                                                         
+     A                                  8  2'itm'                               
+     A                                       COLOR(WHT)                         
+     A                                  9  2'qty'                               
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+     A                                  8  6'haz'                               
+     A                                       COLOR(WHT)                         
+     A                                  9  6'qty'                               
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+     A                                  9 10'item/label               '         
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+     A                                  9 36'description                   '    
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+     A                                  8 67'box'                               
+     A                                       COLOR(WHT)                         
+     A                                  9 67'qty'                               
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+     A                                  8 71'qty/'                              
+     A                                       COLOR(WHT)                         
+     A                                  9 71'box'                               
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+     A                                  8 76'lbl'                               
+     A                                       COLOR(WHT)                         
+     A                                  9 76'typ'                               
+     A                                       DSPATR(UL)                         
+     A                                       COLOR(WHT)                         
+      *                                                                         
+     A          R TRAILER                                                       
+     A                                      OVERLAY                             
+     A                                 23  2 'F3=Exit'                          
+     A                                       COLOR(BLU)                         
+     A                                 23 11 'F8=WrkRmtOutQ'                    
+     A                                       COLOR(BLU)                         
+     A                                 23 26 'F17=Test Print'                   
+     A                                       COLOR(BLU)                         
